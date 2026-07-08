@@ -59,3 +59,7 @@ Synology's "Add ingredient" picker provides `%DEVICE_NAME%` (the triggering came
 
 - This specific display has a rotated color channel mapping and a rotated touch axis (both corrected in software — see `remap_pixel()` and `readTouch()` in `main.cpp`). If you're porting this to a different unit, don't assume these hold without re-verifying.
 - There's a long-running, not-fully-resolved intermittent display corruption issue under certain timing conditions (see comments throughout `main.cpp`). Touch polling interval was tuned as a partial mitigation; if you see "split screen" artifacts, that's a known open issue, not a new bug.
+
+## License
+
+Public domain — see [LICENSE](LICENSE) (The Unlicense).

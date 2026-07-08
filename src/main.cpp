@@ -27,7 +27,7 @@
 #define DEFAULT_DSM_PASSWORD ""
 #define SCREENSAVER_TIMEOUT_MS  30000UL
 #define DEBOUNCE_MS             20000UL
-#define MAX_JPEG_BYTES (1536 * 1024)  // was 512KB — too small for cam3 (backyard) at
+#define MAX_JPEG_BYTES (1536 * 1024)  // was 512KB — too small for one high-res camera at
     // 2880x1620, which sends ~956KB JPEGs. The old cap silently truncated the read
     // (readBytes stops exactly at the cap with no error), producing a valid-looking partial
     // JPEG that decoded fine for its first rows then went to garbage once the entropy-coded
@@ -384,7 +384,7 @@ String cameraName(int id) {
 // ingredient (there's no "camera ID" ingredient) instead of a hardcoded id.
 //
 // Names with spaces have been unreliable in practice (single-word names
-// like "Mailbox" work every time) — suspected cause is Synology's ingredient
+// work every time) — suspected cause is Synology's ingredient
 // substitution not URL-encoding the space, and a raw space being structurally
 // significant in an HTTP request line (it can truncate/mangle the request
 // before it reaches us). Try a '+'-as-space fallback (in case it came
@@ -405,7 +405,7 @@ int cameraIdForName(const String &name) {
 
 // Accepts either a plain numeric camera id (old-style rules, e.g. "cam=1")
 // or a camera name (from Synology's "device name" ingredient, e.g.
-// "cam=Garage Indoors") and resolves either to a numeric id. Returns -1 if
+// "cam=Living Room") and resolves either to a numeric id. Returns -1 if
 // the value is empty or names a camera we don't recognize.
 int parseCamParam(const String &raw) {
     String v = raw;
@@ -1378,8 +1378,8 @@ void setup() {
     // frame left on screen for a long, uninterrupted stretch (which the
     // setup screen is, while the user reads instructions/connects/submits
     // the form) accumulates a scanout/DMA glitch over time — the same
-    // shifting/splitting appeared on the garage photo too, which similarly
-    // sits static for a while between triggers, so if periodic re-presenting
+    // shifting/splitting appeared on regular snapshots too, which similarly
+    // sit static for a while between triggers, so if periodic re-presenting
     // prevents it here, that's a mitigation for normal photo viewing too.
     wm.setConfigPortalBlocking(false);
     bool wmConnected = wm.autoConnect("SenseCAP-Setup");
