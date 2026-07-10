@@ -1073,10 +1073,18 @@ function updateStatus(){fetch('/status').then(r=>r.json()).then(d=>{
 function snap(cam,name){
   document.getElementById('status').innerText='Fetching '+name+'...';
   fetch('/trigger?cam='+cam).then(function(){
-    var attempts=0;
+    // Deadline, not an attempt count: the ESP32's web server is single-
+    // threaded and can't answer /status at all while a fetch is in flight
+    // (see busy below), so a slow poll response eats into the wait just as
+    // much as the interval between polls does. NAS fetches have been
+    // observed taking up to ~36s under load, so give this comfortable
+    // margin above that rather than the old fixed 10s/20-attempt cutoff,
+    // which was cutting off well before slow-but-real fetches finished and
+    // leaving the page showing a stale or missing snapshot.
+    var deadline=Date.now()+60000;
     var poll=setInterval(function(){
       fetch('/status').then(r=>r.json()).then(function(d){
-        if(d.state==='image'||++attempts>20){
+        if(!d.busy||Date.now()>deadline){
           clearInterval(poll);
           var img=document.getElementById('img');
           img.onload=function(){img.style.display='block';};
@@ -1175,8 +1183,14 @@ void setupWebServer() {
         webServer.send(200, "text/html", PAGE_HTML);
     });
     webServer.on("/status", HTTP_GET, [](){
+        // busy covers both an in-flight fetch (processing) and a trigger that's
+        // been queued but not yet picked up by loop() (pendingMotion) — without
+        // the latter, a poll landing in that narrow gap would see processing
+        // still false and wrongly conclude the request that was just submitted
+        // had already finished.
         String json = "{\"state\":\"" + String(stateName()) + "\""
             + ",\"lastCam\":" + String(lastCamId)
+            + ",\"busy\":" + (processing || pendingMotion ? "true" : "false")
             + "}";
         webServer.send(200, "application/json", json);
     });
