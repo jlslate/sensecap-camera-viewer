@@ -9,7 +9,7 @@ Built with [PlatformIO](https://platformio.org/) + Arduino framework.
 - Fetches JPEG snapshots from Synology Surveillance Station's `SYNO.SurveillanceStation.Camera` API (not RTSP)
 - Auto-discovers every camera configured on the NAS — no need to hardcode camera IDs
 - On-screen overlay: camera name and date/time, independently toggleable, with 12/24-hour and Y-M-D/M-D-Y/D-M-Y format options
-- On-device photo history (5-frame ring buffer) with left/right touchscreen arrows to browse recent captures, instant redisplay with no re-fetch or re-decode
+- On-device photo history (6-frame ring buffer) with left/right touchscreen arrows to browse recent captures, instant redisplay with no re-fetch or re-decode
 - Web UI for live viewing, NAS/display settings, and camera list
 - WiFi setup via captive portal (WiFiManager) on first boot or if the saved network can't be reached
 - Screensaver with tap-to-wake

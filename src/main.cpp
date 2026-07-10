@@ -342,11 +342,16 @@ int       decodedH   = 0;
 // On-device photo history: a small ring of fully-composited frames (image +
 // letterbox bars + camera name/date-time overlay, exactly as shown on
 // screen), so browsing backward needs no network fetch or JPEG re-decode —
-// just a memcpy + presentBuffer(). Sized at 5 slots (see MAX_JPEG_BYTES /
+// just a memcpy + presentBuffer(). Sized at 6 slots (see MAX_JPEG_BYTES /
 // MAX_DECODE_BYTES comments above for where the PSRAM to fit this came
 // from) — snapBuf above stays sized off MAX_JPEG_BYTES regardless, since it
-// independently backs the /snapshot HTTP endpoint.
-#define HISTORY_SLOTS 5
+// independently backs the /snapshot HTTP endpoint. Bumped from 5 to 6:
+// at 7,451,364 bytes of free PSRAM measured just before these allocations
+// (see [BOOT] spiram_cap log line in setup()), 6 slots leaves ~490KB of
+// PSRAM headroom vs. ~30KB at the hard ceiling of 7 slots — kept back from
+// the ceiling on purpose, same margin-over-exact-fit practice as the
+// MAX_JPEG_BYTES/MAX_DECODE_BYTES trims above.
+#define HISTORY_SLOTS 6
 uint16_t *g_historyBuf[HISTORY_SLOTS]        = {};  // zero/null-initializes every element
 int       g_historyBarCenterY[HISTORY_SLOTS] = {};  // that slot's arrow/date-time row, stored
                                                      // per-slot in case a future camera's aspect ratio differs
