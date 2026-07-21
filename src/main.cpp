@@ -21,10 +21,10 @@
 // are only placeholders used the very first time a device with blank NVS
 // boots this firmware — real credentials for any given site should never
 // be written here; set them through the portal/Settings page instead.
-#define DEFAULT_NAS_HOST     "192.168.123.123"
+#define DEFAULT_NAS_HOST     "192.168.1.1"
 #define DEFAULT_DSM_PORT     "5000"
-#define DEFAULT_DSM_USER     "SenseCAP"
-#define DEFAULT_DSM_PASSWORD "jukmys-fedfax-8qoMka"
+#define DEFAULT_DSM_USER     ""
+#define DEFAULT_DSM_PASSWORD ""
 #define SCREENSAVER_TIMEOUT_MS  30000UL
 #define DEBOUNCE_MS             20000UL
 #define MAX_JPEG_BYTES (1536 * 1024)  // was 512KB — too small for one high-res camera at
