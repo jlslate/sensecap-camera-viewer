@@ -21,10 +21,10 @@
 // are only placeholders used the very first time a device with blank NVS
 // boots this firmware — real credentials for any given site should never
 // be written here; set them through the portal/Settings page instead.
-#define DEFAULT_NAS_HOST     "192.168.1.1"
+#define DEFAULT_NAS_HOST     "192.168.123.123"
 #define DEFAULT_DSM_PORT     "5000"
-#define DEFAULT_DSM_USER     "admin"
-#define DEFAULT_DSM_PASSWORD ""
+#define DEFAULT_DSM_USER     "SenseCAP"
+#define DEFAULT_DSM_PASSWORD "jukmys-fedfax-8qoMka"
 #define SCREENSAVER_TIMEOUT_MS  30000UL
 #define DEBOUNCE_MS             20000UL
 #define MAX_JPEG_BYTES (1536 * 1024)  // was 512KB — too small for one high-res camera at
@@ -93,12 +93,28 @@ Preferences g_configPrefs;
 String g_nasHost, g_dsmUser, g_dsmPassword;
 int    g_dsmPort;
 
+// Optional second NAS ("site 2") for a Surveillance Station instance at a
+// different location (e.g. reached over a Tailscale link), so cameras from
+// both sites can be resolved and fetched from a single device. Disabled
+// whenever g_nasHost2 is empty — every site-2 code path below is gated on
+// site2Configured(). A webhook's camera name is looked up across both
+// sites' camera lists (see cameraIdForName()) — relies on camera names
+// being unique across the two NASes, since nothing else disambiguates them.
+String g_nasHost2, g_dsmUser2, g_dsmPassword2;
+int    g_dsmPort2;
+
+bool site2Configured() { return g_nasHost2.length() > 0; }
+
 void loadSiteConfig() {
     g_configPrefs.begin("sitecfg", true);
     g_nasHost     = g_configPrefs.getString("nasHost", DEFAULT_NAS_HOST);
     g_dsmPort     = g_configPrefs.getInt("dsmPort", atoi(DEFAULT_DSM_PORT));
     g_dsmUser     = g_configPrefs.getString("dsmUser", DEFAULT_DSM_USER);
     g_dsmPassword = g_configPrefs.getString("dsmPass", DEFAULT_DSM_PASSWORD);
+    g_nasHost2     = g_configPrefs.getString("nasHost2", "");
+    g_dsmPort2     = g_configPrefs.getInt("dsmPort2", atoi(DEFAULT_DSM_PORT));
+    g_dsmUser2     = g_configPrefs.getString("dsmUser2", "");
+    g_dsmPassword2 = g_configPrefs.getString("dsmPass2", "");
     g_configPrefs.end();
 }
 
@@ -108,6 +124,10 @@ void saveSiteConfig() {
     g_configPrefs.putInt("dsmPort", g_dsmPort);
     g_configPrefs.putString("dsmUser", g_dsmUser);
     g_configPrefs.putString("dsmPass", g_dsmPassword);
+    g_configPrefs.putString("nasHost2", g_nasHost2);
+    g_configPrefs.putInt("dsmPort2", g_dsmPort2);
+    g_configPrefs.putString("dsmUser2", g_dsmUser2);
+    g_configPrefs.putString("dsmPass2", g_dsmPassword2);
     g_configPrefs.end();
 }
 
@@ -374,14 +394,22 @@ int       lastCamId = 0;  // camera id of the frame currently on screen
 // to label the on-screen image. Declared this early (rather than next to
 // ssListCameras() itself) so blitFit() — which is defined before the
 // networking code — can reference it.
-#define MAX_CAMERAS 16
+// Bumped from 16 to 32 to hold both sites' cameras combined (see
+// site2Configured() above) — 16 per site.
+#define MAX_CAMERAS 32
+// Each id here is a *combined* id: site (0 or 1) packed into bit 16, the
+// Synology-native camera id in the low 16 bits — see ssListCameras() and
+// ssGetSnapshot(). Synology ids are small per-NAS integers, so two sites'
+// ids can otherwise collide; packing the site in keeps every id in this
+// table globally unique and lets ssGetSnapshot() route to the right NAS
+// without a separate lookup table.
 int    g_camIds[MAX_CAMERAS];
 String g_camNames[MAX_CAMERAS];
 int    g_camCount = 0;
 
 String cameraName(int id) {
     for (int i = 0; i < g_camCount; i++) if (g_camIds[i] == id) return g_camNames[i];
-    return "Cam " + String(id);
+    return "Cam " + String(id & 0xFFFF);
 }
 
 // Reverse of cameraName() — case-insensitive match against the cached
@@ -395,6 +423,8 @@ String cameraName(int id) {
 // before it reaches us). Try a '+'-as-space fallback (in case it came
 // through form-encoded instead of percent-encoded) before giving up.
 int cameraIdForName(const String &name) {
+    // Searches both sites' cameras combined — relies on camera names being
+    // unique across the two NASes (see g_nasHost2 comment above).
     for (int i = 0; i < g_camCount; i++) {
         if (g_camNames[i].equalsIgnoreCase(name)) return g_camIds[i];
     }
@@ -746,18 +776,23 @@ void blitFit() {
     activeBuf = target;
 }
 
-String g_sid = "";
-String g_camerasJson = "";  // cached JSON array of {id,name} from the last successful List call
+String g_sid = "";   // site 0 (primary/home) session id
+String g_sid2 = "";  // site 1 (site2Configured()) session id
+String g_camerasJson = "";  // cached JSON array of {id,name} from the last successful List call, both sites combined
 
-String nasApiUrl() {
+String nasApiUrl(int site) {
+    if (site == 1) return "http://" + g_nasHost2 + ":" + String(g_dsmPort2) + "/webapi/";
     return "http://" + g_nasHost + ":" + String(g_dsmPort) + "/webapi/";
 }
 
-bool ssLogin() {
-    String url = nasApiUrl()
+bool ssLogin(int site) {
+    String &sid  = (site == 1) ? g_sid2 : g_sid;
+    String &user = (site == 1) ? g_dsmUser2 : g_dsmUser;
+    String &pass = (site == 1) ? g_dsmPassword2 : g_dsmPassword;
+    String url = nasApiUrl(site)
         + "auth.cgi?api=SYNO.API.Auth&version=6&method=login"
-        + "&account=" + g_dsmUser
-        + "&passwd="  + g_dsmPassword
+        + "&account=" + user
+        + "&passwd="  + pass
         + "&session=SurveillanceStation&format=sid";
     HTTPClient http;
     http.begin(url);
@@ -768,8 +803,8 @@ bool ssLogin() {
     http.end();
     JsonDocument doc;
     if (deserializeJson(doc, body) || !doc["success"].as<bool>()) return false;
-    g_sid = doc["data"]["sid"].as<String>();
-    Serial.printf("[SS] sid=%s\n", g_sid.c_str());
+    sid = doc["data"]["sid"].as<String>();
+    Serial.printf("[SS] site%d sid=%s\n", site, sid.c_str());
     return true;
 }
 
@@ -777,8 +812,13 @@ bool ssListCameras();  // defined below; called here so the very first
                        // snapshot already has a real name to overlay instead
                        // of falling back to "Cam N"
 
-size_t ssGetSnapshot(int camId) {
-    if (g_sid.isEmpty() && !ssLogin()) return 0;
+// camId here is the *combined* id described above g_camIds — decode back
+// into (site, Synology-native id) before talking to either NAS.
+size_t ssGetSnapshot(int combinedCamId) {
+    int site  = (combinedCamId >> 16) & 1;
+    int camId = combinedCamId & 0xFFFF;
+    String &sid = (site == 1) ? g_sid2 : g_sid;
+    if (sid.isEmpty() && !ssLogin(site)) return 0;
     if (g_camCount == 0) ssListCameras();
     for (int attempt = 0; attempt < 2; attempt++) {
         // Per Synology's official Web API docs, GetSnapshot's profileType param
@@ -787,11 +827,11 @@ size_t ssGetSnapshot(int camId) {
         // cameraId, an older calling convention that returns an image but
         // silently ignores profileType, which is why the earlier attempt had
         // no effect.
-        String url = nasApiUrl()
+        String url = nasApiUrl(site)
             + "entry.cgi?api=SYNO.SurveillanceStation.Camera&version=9"
             + "&method=GetSnapshot&id=" + String(camId)
             + "&profileType=1"
-            + "&_sid=" + g_sid;
+            + "&_sid=" + sid;
         unsigned long tBegin = millis();
         HTTPClient http;
         http.begin(url);
@@ -800,8 +840,8 @@ size_t ssGetSnapshot(int camId) {
         int code = http.GET();
         unsigned long tGetMs = millis() - tGetStart;
         if (code != 200) {
-            http.end(); g_sid = "";
-            if (attempt == 0 && ssLogin()) continue;
+            http.end(); sid = "";
+            if (attempt == 0 && ssLogin(site)) continue;
             return 0;
         }
         int contentLen = http.getSize();  // -1 if server didn't send Content-Length
@@ -823,11 +863,11 @@ size_t ssGetSnapshot(int camId) {
         Serial.printf("[SS-TIMING] begin=%lums GET=%lums readBytes=%lums\n",
             tGetStart - tBegin, tGetMs, tReadMs);
         if (got < 4 || jpegBuf[0] != 0xFF || jpegBuf[1] != 0xD8) {
-            g_sid = ""; return 0;
+            sid = ""; return 0;
         }
         bool hasEOI = (got >= 2 && jpegBuf[got - 2] == 0xFF && jpegBuf[got - 1] == 0xD9);
-        Serial.printf("[SS] %zu bytes cam%d (Content-Length=%d, match=%s, EOI=%s)\n",
-            got, camId, contentLen,
+        Serial.printf("[SS] %zu bytes site%d cam%d (Content-Length=%d, match=%s, EOI=%s)\n",
+            got, site, camId, contentLen,
             (contentLen < 0 || (size_t)contentLen == got) ? "yes" : "NO-MISMATCH",
             hasEOI ? "yes" : "MISSING");
         return got;
@@ -835,60 +875,70 @@ size_t ssGetSnapshot(int camId) {
     return 0;
 }
 
-// Queries the NAS for every camera configured on that Surveillance Station
-// install (not just the ones this device happens to know about) and caches
-// the result in g_camerasJson for the web UI to build its button grid from.
-bool ssListCameras() {
-    if (g_sid.isEmpty() && !ssLogin()) return false;
+// Queries every configured NAS (site 0, plus site 1 when site2Configured())
+// for every camera on that Surveillance Station install and caches the
+// combined result in g_camerasJson for the web UI to build its button grid
+// from. Returns true if at least one site's list succeeded — a site 2
+// outage shouldn't take site 0's already-working cameras down with it.
+bool ssListCamerasForSite(int site, String &json, bool &first) {
+    String &sid = (site == 1) ? g_sid2 : g_sid;
+    if (sid.isEmpty() && !ssLogin(site)) return false;
     for (int attempt = 0; attempt < 2; attempt++) {
-        String url = nasApiUrl()
+        String url = nasApiUrl(site)
             + "entry.cgi?api=SYNO.SurveillanceStation.Camera&version=9"
-            + "&method=List&_sid=" + g_sid;
+            + "&method=List&_sid=" + sid;
         HTTPClient http;
         http.begin(url);
         http.setTimeout(8000);
         int code = http.GET();
         if (code != 200) {
-            http.end(); g_sid = "";
-            if (attempt == 0 && ssLogin()) continue;
+            http.end(); sid = "";
+            if (attempt == 0 && ssLogin(site)) continue;
             return false;
         }
         String body = http.getString();
         http.end();
         JsonDocument doc;
         if (deserializeJson(doc, body) || !doc["success"].as<bool>()) {
-            g_sid = "";
-            if (attempt == 0 && ssLogin()) continue;
+            sid = "";
+            if (attempt == 0 && ssLogin(site)) continue;
             return false;
         }
         JsonArray cams = doc["data"]["cameras"].as<JsonArray>();
-        String json = "[";
-        bool first = true;
-        g_camCount = 0;
         for (JsonObject cam : cams) {
-            if (!first) json += ",";
-            first = false;
             // Synology's List response carries the user-assigned camera name
             // in "newName" ("name" isn't present in the payload at all) —
             // confirmed against a live NAS via serial debug logging.
             int id = cam["id"].as<int>();
             String name = cam["newName"].as<String>();
+            int combinedId = (site << 16) | (id & 0xFFFF);
             if (g_camCount < MAX_CAMERAS) {
-                g_camIds[g_camCount] = id;
+                g_camIds[g_camCount] = combinedId;
                 g_camNames[g_camCount] = name;
                 g_camCount++;
             }
+            if (!first) json += ",";
+            first = false;
             name.replace("\\", "\\\\");
             name.replace("\"", "\\\"");
-            json += "{\"id\":" + String(id)
+            json += "{\"id\":" + String(combinedId)
                   + ",\"name\":\"" + name + "\"}";
         }
-        json += "]";
-        g_camerasJson = json;
-        Serial.printf("[SS] listed %d cameras\n", cams.size());
+        Serial.printf("[SS] site%d listed %d cameras\n", site, cams.size());
         return true;
     }
     return false;
+}
+
+bool ssListCameras() {
+    g_camCount = 0;
+    String json = "[";
+    bool first = true;
+    bool ok0 = ssListCamerasForSite(0, json, first);
+    bool ok1 = site2Configured() ? ssListCamerasForSite(1, json, first) : false;
+    json += "]";
+    g_camerasJson = json;
+    return ok0 || ok1;
 }
 
 void drawError(const String &msg) {
@@ -1139,6 +1189,12 @@ button{margin-top:18px;padding:10px 16px;background:#222;color:#fff;border:none;
     html += "<label>NAS Username<input name=\"dsmUser\" value=\"" + g_dsmUser + "\"></label>";
     html += "<label>NAS Password (leave blank to keep current)<input type=\"password\" name=\"dsmPass\" value=\"\"></label>";
 
+    html += "<h2>Second NAS (optional — e.g. a remote site reached over Tailscale)</h2>";
+    html += "<label>NAS Host/IP<input name=\"nasHost2\" value=\"" + g_nasHost2 + "\" placeholder=\"leave blank to disable\"></label>";
+    html += "<label>NAS Port<input name=\"dsmPort2\" value=\"" + String(g_dsmPort2) + "\"></label>";
+    html += "<label>NAS Username<input name=\"dsmUser2\" value=\"" + g_dsmUser2 + "\"></label>";
+    html += "<label>NAS Password (leave blank to keep current)<input type=\"password\" name=\"dsmPass2\" value=\"\"></label>";
+
     html += "<h2>Display Overlay</h2>";
     html += "<div class=\"check-row\"><input type=\"checkbox\" id=\"showCam\" name=\"showCam\""
           + String(g_showCamName ? " checked" : "") + "><label for=\"showCam\">Show camera name</label></div>";
@@ -1235,6 +1291,11 @@ void setupWebServer() {
         pendingCamId  = camId;
         pendingMotion = true;
     });
+    webServer.on("/reboot", HTTP_GET, [](){
+        webServer.send(200, "text/plain", "Rebooting...");
+        delay(300);
+        ESP.restart();
+    });
     webServer.on("/reconfigure", HTTP_GET, [](){
         webServer.send(200, "text/plain", "Clearing WiFi + NAS config, rebooting...");
         delay(300);
@@ -1255,8 +1316,16 @@ void setupWebServer() {
         g_dsmUser = webServer.arg("dsmUser");
         String newPass = webServer.arg("dsmPass");
         if (newPass.length()) g_dsmPassword = newPass;
+
+        g_nasHost2 = webServer.arg("nasHost2");
+        g_dsmPort2 = webServer.arg("dsmPort2").toInt();
+        g_dsmUser2 = webServer.arg("dsmUser2");
+        String newPass2 = webServer.arg("dsmPass2");
+        if (newPass2.length()) g_dsmPassword2 = newPass2;
+
         saveSiteConfig();
-        g_sid = "";  // force re-login with the new credentials
+        g_sid = "";   // force re-login with the new credentials
+        g_sid2 = "";
         g_camerasJson = "";  // force a camera list refresh against the new NAS/credentials
 
         // Checkboxes are only present in the POST body when checked.

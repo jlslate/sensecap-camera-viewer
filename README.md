@@ -8,6 +8,7 @@ Built with [PlatformIO](https://platformio.org/) + Arduino framework.
 
 - Fetches JPEG snapshots from Synology Surveillance Station's `SYNO.SurveillanceStation.Camera` API (not RTSP)
 - Auto-discovers every camera configured on the NAS — no need to hardcode camera IDs
+- Optional second NAS/Surveillance Station instance (e.g. a remote site reached over Tailscale), with cameras routed to the right NAS by name prefix
 - On-screen overlay: camera name and date/time, independently toggleable, with 12/24-hour and Y-M-D/M-D-Y/D-M-Y format options
 - On-device photo history (6-frame ring buffer) with left/right touchscreen arrows to browse recent captures, instant redisplay with no re-fetch or re-decode
 - Web UI for live viewing, NAS/display settings, and camera list
@@ -42,6 +43,17 @@ Create an **Action Rule** per camera with a **Webhook** action:
 Synology's "Add ingredient" picker provides `%DEVICE_NAME%` (the triggering camera's name) — using it means every camera's rule can share the same URL pattern instead of hardcoding a different numeric camera ID per rule. The device resolves the name to Synology's internal camera ID automatically (falling back to treating the value as a literal numeric ID for old-style rules).
 
 **Camera names must not contain spaces.** Synology's ingredient substitution doesn't URL-encode the value, and a raw space in an HTTP request line truncates the request before it reaches the device. Use single-word names (`KitchenDoor`, not `Kitchen Door`) or `-`/`_` separators. If you'd rather not rename cameras, a hardcoded numeric ID (`cam=14`) always works regardless of spaces — check the current id/name mapping at `http://<device-ip>/cameras`.
+
+## Second NAS / second location (e.g. over Tailscale)
+
+The device can pull from two separate Surveillance Station installs — useful if you have a second NAS at another site (reached over Tailscale or any other VPN) and want its cameras to show up on the same screen.
+
+1. On `/settings`, fill in the "Second NAS" section: host/IP, port, username, password.
+2. Make sure every camera name is unique across *both* NASes — the device resolves a webhook's `cam` name by searching both sites' camera lists combined, with nothing else to disambiguate a collision. Then point the second site's Action Rule webhooks at the same device, same as the first: `http://<device-ip>/motion?cam=%DEVICE_NAME%`.
+
+An `unknown cam` (HTTP 400) response for a second-site camera almost always means either the name doesn't exactly match what's configured on that NAS, or the device hasn't successfully logged into the second NAS (check the serial log for `[SS] site1 ...` lines). A device unreachable purely due to routing (e.g. a Tailscale ACL blocking the NAS→device path) would instead show up as the webhook never getting a response at all, not a 400.
+
+Bare numeric `cam=<id>` values (old-style rules) always resolve against the first NAS, exactly as before.
 
 ## Web endpoints
 
